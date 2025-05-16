@@ -43,6 +43,8 @@ ghost_positions = {
     "MINIMAX": (2, 5)
 }
 prev_scared_pos = ghost_positions["SCARED"]
+ghost_respawn_time = 0  # Single timer for all ghosts
+all_ghosts_eaten = False
 
 # Color definitions
 WHITE = (255, 255, 255)
@@ -57,11 +59,11 @@ ORANGE = (255, 165, 0)
 PINK = (255, 192, 203)
 LIGHT_BLUE = (100, 100, 255)
 SCARED_COLOR = (150, 150, 255)  # Light blue for scared ghosts
-
+POWERED_COLOR = (200, 200, 255)  # Light blue-white for powered ghosts
+POWER_PELLET_COLOR = (255, 105, 180)  # Bright pink for power pellets
 
 def get_distance(pos1, pos2):
     return abs(pos1[0] - pos2[0]) + abs(pos1[1] - pos2[1])
-
 
 def calculate_reward(prev_distance, new_distance, pacman_state, pacman_caught=False, ghost_eaten=False):
     if pacman_caught:
@@ -73,12 +75,10 @@ def calculate_reward(prev_distance, new_distance, pacman_state, pacman_caught=Fa
     else:
         return -1 if new_distance < prev_distance else 1
 
-
 def choose_action(state, q_table):
     if state not in q_table:
         q_table[state] = {a: 0 for a in ACTIONS}
     return random.choice(ACTIONS) if random.random() < epsilon else max(q_table[state], key=q_table[state].get)
-
 
 def update_q_table(state, action, reward, next_state, q_table):
     if state not in q_table:
@@ -88,10 +88,8 @@ def update_q_table(state, action, reward, next_state, q_table):
     max_next_q = max(q_table[next_state].values())
     q_table[state][action] += learning_rate * (reward + discount * max_next_q - q_table[state][action])
 
-
 def get_state(pacman, ghost_pos):
     return (pacman.x, pacman.y, ghost_pos[0], ghost_pos[1], pacman.state)
-
 
 def perform_action(action, ghost_pos, pacman_pos, grid, prev=None, depth=4):
     if action == 'ASTAR':
@@ -103,7 +101,6 @@ def perform_action(action, ghost_pos, pacman_pos, grid, prev=None, depth=4):
     elif action == 'SCARED':
         return scaredghost(grid, ghost_pos, pacman_pos, prev=prev or (-1, -1))
     return ghost_pos
-
 
 GRID_SIZE = 25  # Keep it small to fit more of the grid
 NUM_ROWS = len(GRID)
@@ -118,11 +115,33 @@ GRID_OFFSET_Y = (SCREEN_HEIGHT - NUM_ROWS * GRID_SIZE) // 2
 screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT))
 pygame.display.set_caption('Pacman RL Game')
 
-
-def draw_ghost(surface, rect, ghost_type, scared=False):
+def draw_ghost(surface, rect, ghost_type, scared=False, powered=False):
     center = rect.center
 
-    if scared:
+    if powered:
+        # Draw all ghosts with special powered color (not black)
+        color = POWERED_COLOR
+        pygame.draw.circle(surface, color, rect.center, rect.width // 2)
+
+        # Ghost bottom wavy part
+        points = []
+        for x in range(rect.left, rect.right + 1, 5):
+            y_offset = 3 * math.sin((x - rect.left) * math.pi * 2 / rect.width)
+            points.append((x, rect.bottom - y_offset))
+        points.append((rect.right, rect.bottom))
+        points.append((rect.left, rect.bottom))
+        pygame.draw.polygon(surface, color, points)
+
+        # Eyes (still visible but different)
+        eye_radius = rect.width // 6
+        pupil_radius = rect.width // 10
+        # Left eye
+        pygame.draw.circle(surface, WHITE, (center[0] - 5, center[1] - 5), eye_radius)
+        pygame.draw.circle(surface, BLUE, (center[0] - 5, center[1] - 5), pupil_radius)
+        # Right eye
+        pygame.draw.circle(surface, WHITE, (center[0] + 5, center[1] - 5), eye_radius)
+        pygame.draw.circle(surface, BLUE, (center[0] + 5, center[1] - 5), pupil_radius)
+    elif scared:
         # Draw scared ghost with semi-transparent body
         s = pygame.Surface((rect.width, rect.height), pygame.SRCALPHA)
         pygame.draw.circle(s, (*SCARED_COLOR, 200), (rect.width // 2, rect.height // 2), rect.width // 2)
@@ -186,7 +205,6 @@ def draw_ghost(surface, rect, ghost_type, scared=False):
         pygame.draw.circle(surface, WHITE, (center[0] + 5, center[1] - 5), eye_radius)
         pygame.draw.circle(surface, BLACK, (center[0] + 5, center[1] - 5), pupil_radius)
 
-
 def draw_grid(grid, pacman, ghost_positions):
     screen.fill(BLACK)
 
@@ -204,8 +222,8 @@ def draw_grid(grid, pacman, ghost_positions):
             # Draw pellets
             if cell == 2:  # Normal pellet
                 pygame.draw.circle(screen, WHITE, center, GRID_SIZE // 6)
-            elif cell == 3:  # Power pellet
-                pygame.draw.circle(screen, WHITE, center, GRID_SIZE // 4)
+            elif cell == 3:  # Power pellet (changed to pink)
+                pygame.draw.circle(screen, POWER_PELLET_COLOR, center, GRID_SIZE // 4)
             elif cell == 1:  # Wall
                 pygame.draw.rect(screen, BLUE, rect)
                 pygame.draw.rect(screen, (0, 0, 100), rect, 2)  # Wall border
@@ -218,8 +236,10 @@ def draw_grid(grid, pacman, ghost_positions):
                 GRID_OFFSET_Y + pos[0] * GRID_SIZE,
                 GRID_SIZE, GRID_SIZE
             )
-
-            draw_ghost(screen, ghost_rect, ghost_type, ghost_type == "SCARED")
+            # Draw ghost with special color when Pacman is powered
+            draw_ghost(screen, ghost_rect, ghost_type,
+                       scared=(ghost_type == "SCARED"),
+                       powered=(pacman.state == "POWERED"))
 
     # Draw Pacman with open/close mouth animation
     pacman_rect = pygame.Rect(
@@ -246,13 +266,34 @@ def draw_grid(grid, pacman, ghost_positions):
 
     pygame.display.update()
 
+def respawn_ghosts():
+    """Respawn all ghosts only when all are eaten, after 2 seconds"""
+    global ghost_positions, all_ghosts_eaten, ghost_respawn_time
+
+    # Check if all ghosts are eaten
+    if all(pos is None for pos in ghost_positions.values()) and not all_ghosts_eaten:
+        all_ghosts_eaten = True
+        ghost_respawn_time = time.time()
+
+    # If all were eaten and 2 seconds have passed
+    if all_ghosts_eaten and time.time() - ghost_respawn_time >= 2:
+        # Choose respawn positions
+        respawn_positions = [(2, 2), (3, 3), (4, 4), (2, 5)]
+        random.shuffle(respawn_positions)
+
+        for i, ghost_type in enumerate(ghost_positions.keys()):
+            ghost_positions[ghost_type] = respawn_positions[i]
+            if ghost_type == "SCARED":
+                prev_scared_pos = respawn_positions[i]
+
+        all_ghosts_eaten = False
 
 def game_loop():
-    global prev_scared_pos, ghost_positions
+    global prev_scared_pos, ghost_positions, ghost_respawn_time, all_ghosts_eaten
 
     num_episodes = 100
     clock = pygame.time.Clock()
-    FPS = 2 # Controls game speed
+    FPS = 2  # Controls game speed
 
     for episode in range(num_episodes):
         GRID = create_base_grid()
@@ -264,6 +305,8 @@ def game_loop():
             "MINIMAX": (2, 5)
         }
         prev_scared_pos = ghost_positions["SCARED"]
+        ghost_respawn_time = 0
+        all_ghosts_eaten = False
 
         game_over = False
 
@@ -284,6 +327,9 @@ def game_loop():
                 pacman.move("LEFT", GRID)
             elif keys[pygame.K_d]:
                 pacman.move("RIGHT", GRID)
+
+            # Check for ghost respawning (only when all are eaten)
+            respawn_ghosts()
 
             draw_grid(GRID, pacman, ghost_positions)
 
@@ -341,7 +387,6 @@ def game_loop():
     for key in qmanagers:
         qmanagers[key].save(qfiles[key])
     pygame.quit()
-
 
 if __name__ == "__main__":
     game_loop()
