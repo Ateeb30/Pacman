@@ -105,11 +105,16 @@ def perform_action(action, ghost_pos, pacman_pos, grid, prev=None, depth=4):
     return ghost_pos
 
 
-# Pygame initialization
-pygame.init()
-SCREEN_WIDTH = 800  # Increased for better visibility
+GRID_SIZE = 25  # Keep it small to fit more of the grid
+NUM_ROWS = len(GRID)
+NUM_COLS = len(GRID[0])
+
+SCREEN_WIDTH = 800
 SCREEN_HEIGHT = 800
-GRID_SIZE = 30  # Slightly larger for better visibility
+
+GRID_OFFSET_X = (SCREEN_WIDTH - NUM_COLS * GRID_SIZE) // 2
+GRID_OFFSET_Y = (SCREEN_HEIGHT - NUM_ROWS * GRID_SIZE) // 2
+
 screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT))
 pygame.display.set_caption('Pacman RL Game')
 
@@ -193,7 +198,7 @@ def draw_grid(grid, pacman, ghost_positions):
 
     for i, row in enumerate(grid):
         for j, cell in enumerate(row):
-            rect = pygame.Rect(j * GRID_SIZE, i * GRID_SIZE, GRID_SIZE, GRID_SIZE)
+            rect = pygame.Rect(GRID_OFFSET_X + j * GRID_SIZE, GRID_OFFSET_Y + i * GRID_SIZE, GRID_SIZE, GRID_SIZE)
             center = rect.center
 
             # Draw pellets
@@ -208,11 +213,20 @@ def draw_grid(grid, pacman, ghost_positions):
     # Draw ghosts
     for ghost_type, pos in ghost_positions.items():
         if pos:
-            ghost_rect = pygame.Rect(pos[1] * GRID_SIZE, pos[0] * GRID_SIZE, GRID_SIZE, GRID_SIZE)
+            ghost_rect = pygame.Rect(
+                GRID_OFFSET_X + pos[1] * GRID_SIZE,
+                GRID_OFFSET_Y + pos[0] * GRID_SIZE,
+                GRID_SIZE, GRID_SIZE
+            )
+
             draw_ghost(screen, ghost_rect, ghost_type, ghost_type == "SCARED")
 
     # Draw Pacman with open/close mouth animation
-    pacman_rect = pygame.Rect(pacman.y * GRID_SIZE, pacman.x * GRID_SIZE, GRID_SIZE, GRID_SIZE)
+    pacman_rect = pygame.Rect(
+        GRID_OFFSET_X + pacman.y * GRID_SIZE,
+        GRID_OFFSET_Y + pacman.x * GRID_SIZE,
+        GRID_SIZE, GRID_SIZE
+    )
 
     # Mouth angle changes over time for animation
     mouth_angle = (math.sin(time.time() * 5) * 0.4 + 0.6) * math.pi
